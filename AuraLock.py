@@ -1,3 +1,6 @@
+# AuraLock Facial Recognition Door Lock Project
+# Dillon McCardell
+
 
 #Imports for ADC
 import busio
