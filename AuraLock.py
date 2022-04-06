@@ -264,6 +264,7 @@ try:
                     # Update time remaining every minute
                     time.sleep(60)
                     timeRemaining = timeRemaining - 1
+                delayedUnlock = False
             time.sleep(2)
 
                 
