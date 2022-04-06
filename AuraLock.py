@@ -38,6 +38,9 @@ imageHalt = False
 # Variable to halt doorSense_thread
 global lockHalt
 lockHalt = False
+# Variable to allow anyone to unlock home when 'DelayedUnlock' is true
+global delayedUnlock 
+delayedUnlock = False
 
 # Get a reference to the Raspberry Pi camera.
 camera = picamera.PiCamera()
@@ -163,45 +166,61 @@ try:
                 face_locations = face_recognition.face_locations(output)
                 # print("Found {} faces in image.".format(len(face_locations)))
                 face_encodings = face_recognition.face_encodings(output, face_locations)
-
+                # Declare global variable lockHalt which halts other threads that would conflict with this one
+                global lockHalt
                 # Loop over each face found in the frame to see if it's someone we know.
                 for face_encoding in face_encodings:
-                    # See if the face is a match for the known face(s)
-                    match = face_recognition.compare_faces(encodings_list, face_encoding)
-                    name = "Unknown Person"
-                    keys = images_dict.keys()
-                    keys_list = list(keys)
-                    for i in range(len(keys_list)):
-                        if match[(len(match)-len(keys_list))+i]:
-                            name = keys_list[i]
-                            #print(keys_list)
-                            global lockHalt
-                            lockHalt = True
+                    if delayedUnlock:
+                        GPIO.output(led,True)
+                        lockHalt = True
+                        deadbolt.retract()
+                        time.sleep(5)
+                        #Wait for door to close
+                        while True:
                             if GPIO.input(doorSensor):
-                                GPIO.output(19,True)
-                                # Take an image of who unlocked the door and upload it to Firebase
-                                camera.capture('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
-                                storage.child("AuraLock Data").child('Images to App').child('%s'%name).put('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
-                                # Notify App that a new unlock has been made
-                                db.child("AuraLock Data").child("newUnlock").set('True')
-                                db.child("AuraLock Data").child("newUnlockName").set('%s'%name)
-                                # Remove the image of who unlocked the door from the RPi
-                                os.remove('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
-                                # Unlock Door
-                                print('%s is Unlocking Door'%name)
-                                deadbolt.retract()
-                                time.sleep(5)
-                                #Wait for door to close
-                                while True:
-                                    if GPIO.input(doorSensor):
-                                        time.sleep(2)
-                                        # Lock Door
-                                        print('Door Closed, Locking Door')
-                                        deadbolt.extend()
-                                        lockHalt = False
-                                        break
-                                GPIO.output(19,False)
-                    print('%s\'s Face Detected'%name)
+                                time.sleep(2)
+                                # Lock Door
+                                print('Door Closed, Locking Door')
+                                deadbolt.extend()
+                                lockHalt = False
+                                break
+                        GPIO.output(led,False)
+                    else:
+                        # See if the face is a match for the known face(s)
+                        match = face_recognition.compare_faces(encodings_list, face_encoding)
+                        name = "Unknown Person"
+                        keys = images_dict.keys()
+                        keys_list = list(keys)
+                        for i in range(len(keys_list)):
+                            if match[(len(match)-len(keys_list))+i]:
+                                name = keys_list[i]
+                                #print(keys_list)
+                                lockHalt = True
+                                if GPIO.input(doorSensor):
+                                    GPIO.output(led,True)
+                                    # Take an image of who unlocked the door and upload it to Firebase
+                                    camera.capture('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
+                                    storage.child("AuraLock Data").child('Images to App').child('%s'%name).put('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
+                                    # Notify App that a new unlock has been made
+                                    db.child("AuraLock Data").child("newUnlock").set('True')
+                                    db.child("AuraLock Data").child("newUnlockName").set('%s'%name)
+                                    # Remove the image of who unlocked the door from the RPi
+                                    os.remove('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
+                                    # Unlock Door
+                                    print('%s is Unlocking Door'%name)
+                                    deadbolt.retract()
+                                    time.sleep(5)
+                                    #Wait for door to close
+                                    while True:
+                                        if GPIO.input(doorSensor):
+                                            time.sleep(2)
+                                            # Lock Door
+                                            print('Door Closed, Locking Door')
+                                            deadbolt.extend()
+                                            lockHalt = False
+                                            break
+                                    GPIO.output(led,False)
+                        print('%s\'s Face Detected'%name)
 
     def doorSense_thread():
         while True:
@@ -218,6 +237,35 @@ try:
                             pass
             time.sleep(1)
 
+    # Gives functionality to allow user to unlock the door for a set amount of time.
+    # When true, the door will open to any face detected, not just authorized ones.
+    # The delay time is pulled from Firebase, and remaining time is updated in Firebase every minute
+    def delayed_unlock_thread():
+        while True:
+            # Pull value from firebase
+            get_data = db.child("AuraLock Data").child("DelayedUnlock").child("DelayUnlock").get()
+            # If the mobile app user has triggered a delayed unlock:
+            if (get_data.val() == 'True'):
+                global delayedUnlock
+                # Notify facial_recognition_thread to unlock to any face
+                delayedUnlock = True
+                # Reset Firebase variable
+                db.child("AuraLock Data").child("DelayedUnlock").child("DelayUnlock").set("False")
+                # Get time delay value
+                get_data = db.child("AuraLock Data").child("DelayedUnlock").child("delayTime").get()
+                # Cast to int, removing decimals
+                delayTime = int(get_data.val())
+                # Debugging print
+                print('Delayed Unlock Enabled for %s minutes'%delayTime)
+                timeRemaining = delayTime
+                for i in range(delayTime+1):
+                    print('Time Remaining: %s minute(s)'%timeRemaining)
+                    db.child("AuraLock Data").child("DelayedUnlock").child("timeRemaining").set(timeRemaining)
+                    # Update time remaining every minute
+                    time.sleep(60)
+                    timeRemaining = timeRemaining - 1
+            time.sleep(2)
+
                 
 
     #Create the thread
@@ -225,11 +273,13 @@ try:
     T2 = Thread(target=addFace_thread)
     T3 = Thread(target=facial_recognition_thread)
     T4 = Thread(target=doorSense_thread)
+    T5 = Thread(target=delayed_unlock_thread)
     #Start the thread
     T1.start()
     T2.start()
     T3.start()
     T4.start()
+    T5.start()
 
 
 
