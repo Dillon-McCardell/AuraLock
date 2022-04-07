@@ -70,6 +70,12 @@ GPIO.setup(led,GPIO.OUT)
 # Set LED to OFF to start
 GPIO.output(led,False)
 
+def ledFlash(t):
+    for x in range(t):
+        GPIO.output(led, True)
+        time.sleep(0.05)
+        GPIO.output(led,False)
+        time.sleep(0.05)
 
 try:     
     #On startup unlock the door, then wait to see if the door is closed, and then lock it
@@ -79,16 +85,12 @@ try:
     print('Waiting for the Door to be Closed')
     while True:
         if GPIO.input(doorSensor):
-            time.sleep(2)
+            time.sleep(1)
             print('Door Closed')
             deadbolt.extend()
             print('Door Locked')
-            for x in range(10):
-                GPIO.output(led, True)
-                time.sleep(0.05)
-                GPIO.output(led,False)
-                time.sleep(0.05)
-            break
+            ledFlash(10)
+        break
 
 
     config = {
@@ -149,11 +151,7 @@ try:
                 print('success')
                 db.child("AuraLock Data").child("Adding Face").set('complete')
                 imageHalt = False
-                for x in range(10):
-                    GPIO.output(led, True)
-                    time.sleep(0.05)
-                    GPIO.output(led,False)
-                    time.sleep(0.05)
+                ledFlash(10)
             time.sleep(1)
 
     def facial_recognition_thread():
@@ -171,6 +169,7 @@ try:
                 # Loop over each face found in the frame to see if it's someone we know.
                 for face_encoding in face_encodings:
                     if delayedUnlock:
+                        print("Door Unlocked in Delayed Unlock Mode: All Access Authorized")
                         GPIO.output(led,True)
                         lockHalt = True
                         deadbolt.retract()
@@ -220,7 +219,6 @@ try:
                                             lockHalt = False
                                             break
                                     GPIO.output(led,False)
-                        print('%s\'s Face Detected'%name)
 
     def doorSense_thread():
         while True:
@@ -246,6 +244,8 @@ try:
             get_data = db.child("AuraLock Data").child("DelayedUnlock").child("DelayUnlock").get()
             # If the mobile app user has triggered a delayed unlock:
             if (get_data.val() == 'True'):
+                # Flash LED Indicator
+                ledFlash(10)
                 global delayedUnlock
                 # Notify facial_recognition_thread to unlock to any face
                 delayedUnlock = True
@@ -258,11 +258,20 @@ try:
                 # Debugging print
                 print('Delayed Unlock Enabled for %s minutes'%delayTime)
                 timeRemaining = delayTime
-                for i in range(delayTime+1):
+                for i in range(timeRemaining+1):
                     print('Time Remaining: %s minute(s)'%timeRemaining)
                     db.child("AuraLock Data").child("DelayedUnlock").child("timeRemaining").set(timeRemaining)
                     # Update time remaining every minute
-                    time.sleep(60)
+                    for i in range(60):
+                        # Check if the delay has been cancelled by the user
+                        cancel = db.child("AuraLock Data").child("DelayedUnlock").child("cancelDelayUnlock").get()
+                        if(cancel.val() == "True"):
+                            db.child("AuraLock Data").child("DelayedUnlock").child("cancelDelayUnlock").set("False")
+                            timeRemaining = 0
+                            db.child("AuraLock Data").child("DelayedUnlock").child("timeRemaining").set(timeRemaining)
+                            break
+                        time.sleep(1)
+                    if(timeRemaining == 0): break
                     timeRemaining = timeRemaining - 1
                 delayedUnlock = False
             time.sleep(2)
