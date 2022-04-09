@@ -1,3 +1,6 @@
+# Helper file for AuraLock 
+# Consolidates code to extend and retract deadbolt
+
 import time
 import os
 import pigpio
@@ -26,11 +29,11 @@ p = read_PWM.reader(pi, PWM_GPIO)
 global pw
 pw = 0
 
+# Extending the deadbolt is more complicated, as the gear must not
+# be in contact with the deadbolt once fully extended
 def extend():
   while True:
     while(channel.value < 36000):
-      #print('Raw ADC Value: ', channel.value)
-      #time.sleep(0.1)
       kit.continuous_servo[0].throttle = -0.1
     time.sleep(0.05)
     if(channel.value >= 36000):
@@ -45,6 +48,9 @@ def extend():
       os.system('sudo killall pigpiod')
       os.system('sudo pigpiod')
       print('pigpiod restarted')
+    # Retract the deadbolt only slighlty until the pulse width of the servo
+    # indicates the gear is not in contact with the deadbolt. These values
+    # have been aquired through manual testing.
     if pw in range(80,300) or pw in range(610,870): 
       print('break at',pw)
       break
@@ -52,11 +58,10 @@ def extend():
     if channel.value > 36000: break
   kit.continuous_servo[0].throttle = 0
 
+# Retract simple retracts the deadbolt until resistance is met
 def retract():
   while True:
     while(channel.value < 36000):
-      #print('Raw ADC Value: ', channel.value)
-      #time.sleep(0.1)
       kit.continuous_servo[0].throttle = 0.15
     time.sleep(0.05)
     if(channel.value >= 36000):
@@ -64,17 +69,6 @@ def retract():
     else:
       pass
   kit.continuous_servo[0].throttle = 0
-
-
-#retract()
-#extend()
-#p.cancel()
-
-
-#pi.stop()
-
-#f = p.frequency()
-#dc = p.duty_cycle()
 
 # Range 415 > pw > 175
 # Range 945 > pw > 700
