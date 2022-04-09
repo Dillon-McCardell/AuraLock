@@ -1,11 +1,11 @@
-#!/usr/bin/env python
+# File to aid in reading the PWM from the feedback servo incorporated in this project
 
 # read_PWM.py
 # 2015-12-08
 # Public Domain
 
 import time
-import pigpio # http://abyz.co.uk/rpi/pigpio/python.html
+import pigpio 
 
 class reader:
    """
