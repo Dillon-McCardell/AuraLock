@@ -51,6 +51,9 @@ output = np.empty((240, 320, 3), dtype=np.uint8)
 import time
 import pyrebase
 
+#Import to attach date/time to uploaded images
+import datetime
+
 #import for threading
 from threading import *
 
@@ -104,11 +107,10 @@ try:
     db = firebase.database()
     storage = firebase.storage()
 
-    #Initialize Database to false (no data needs to be retrieved)
-    db.child("AuraLock Data").child("Unlock").set('False')
-    db.child("AuraLock Data").child("addFace").set('False')
-
-    #Define a the Unlock Thread which listens for the 'Unlock' key in Firebase to change to a value of 'True'
+    # Define a the Unlock Thread which listens for the 'Unlock' key in Firebase to change to a value of 'True'
+    # If detected, the door will unlock.
+    # This thread also listens to detect whether the user wishes to view a "Live Capture"
+    # displaying what the door currently sees. No live video feed.
     def unlock_thread():
         while True:
             get_data = db.child("AuraLock Data").child("Unlock").get()
@@ -126,8 +128,20 @@ try:
                         lockHalt = False
                         break
                 GPIO.output(led,False)
+            # Check to see if a Live Capture has been requested. If so, upload a current image to Firebase
+            get_data = db.child("AuraLock Data").child("LiveCapture").child("newCapture").get()
+            if(get_data.val() == 'True'):
+                db.child("AuraLock Data").child("LiveCapture").child("captureProgress").set("working")
+                db.child("AuraLock Data").child("LiveCapture").child("newCapture").set("False")
+                camera.capture('/home/pi/Documents/AuraLock/Real Time Images/LiveCapture.jpg')
+                storage.child("AuraLock Data").child("Real Time Images").child("LiveCapture.jpg").put("/home/pi/Documents/AuraLock/Real Time Images/LiveCapture.jpg")
+                os.remove('/home/pi/Documents/AuraLock/Real Time Images/LiveCapture.jpg')
+                db.child("AuraLock Data").child("LiveCapture").child("captureProgress").set("complete")
             time.sleep(1)
 
+    # This thread listens to see if the user wishes to add a new authorized user with the 
+    # ability to unlock the door. This thread is responsible for downloading and processing
+    # new images for recognition by the facial_recognition_thread
     def addFace_thread():
         while True:
             get_data = db.child("AuraLock Data").child("addFace").get()
@@ -154,6 +168,9 @@ try:
                 ledFlash(10)
             time.sleep(1)
 
+    # This thread is responsible for taking an image every 0.5s and processing it to detect
+    # whether or not there are authorized faces in the image. This process is subverted by
+    # delayUnlock being True, in which case anyone can unlock the door.
     def facial_recognition_thread():
         while True:
             while not imageHalt:
@@ -200,9 +217,9 @@ try:
                                     # Take an image of who unlocked the door and upload it to Firebase
                                     camera.capture('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
                                     storage.child("AuraLock Data").child('Images to App').child('%s'%name).put('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
-                                    # Notify App that a new unlock has been made
-                                    db.child("AuraLock Data").child("newUnlock").set('True')
-                                    db.child("AuraLock Data").child("newUnlockName").set('%s'%name)
+                                    # Upload the current date/time to Firebase
+                                    current_time = datetime.datetime.now()
+                                    db.child("AuraLock Data").child("datetime").set('%s-%s-%s %s:%s'%(current_time.year,current_time.month,current_time.day,current_time.hour,current_time.minute))
                                     # Remove the image of who unlocked the door from the RPi
                                     os.remove('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
                                     # Unlock Door
@@ -220,6 +237,11 @@ try:
                                             break
                                     GPIO.output(led,False)
 
+    # This simple thread detects whether or not the door has opened.
+    # If it has, the door is relocked upon closing. This covers the case when a user
+    # manually opens the door from the inside while exiting.
+    # This thread is subverted when lockhalt is True, which means the door is opening
+    # for other reasons, such as a new facial recognition or remote unlock.
     def doorSense_thread():
         while True:
             while not lockHalt:
@@ -258,11 +280,15 @@ try:
                 # Debugging print
                 print('Delayed Unlock Enabled for %s minutes'%delayTime)
                 timeRemaining = delayTime
-                for i in range(timeRemaining+1):
+                for i in range(delayTime+1):
                     print('Time Remaining: %s minute(s)'%timeRemaining)
+                    if(timeRemaining == 0): 
+                        print("breaking")
+                        break
+                    timeRemaining = timeRemaining - 1
                     db.child("AuraLock Data").child("DelayedUnlock").child("timeRemaining").set(timeRemaining)
                     # Update time remaining every minute
-                    for i in range(60):
+                    for i in range(5):
                         # Check if the delay has been cancelled by the user
                         cancel = db.child("AuraLock Data").child("DelayedUnlock").child("cancelDelayUnlock").get()
                         if(cancel.val() == "True"):
@@ -271,8 +297,6 @@ try:
                             db.child("AuraLock Data").child("DelayedUnlock").child("timeRemaining").set(timeRemaining)
                             break
                         time.sleep(1)
-                    if(timeRemaining == 0): break
-                    timeRemaining = timeRemaining - 1
                 delayedUnlock = False
             time.sleep(2)
 
