@@ -164,6 +164,7 @@ try:
     def facial_recognition_thread():
         while True:
             while not imageHalt:
+                auth = True
                 # print("Capturing image.")
                 # Grab a single frame of video from the RPi camera as a numpy array
                 camera.capture(output, format="rgb")
@@ -175,11 +176,60 @@ try:
                 global lockHalt
                 # Loop over each face found in the frame to see if it's someone we know.
                 for face_encoding in face_encodings:
-                    if delayedUnlock:
+                    # See if the face is a match for the known face(s)
+                    match = face_recognition.compare_faces(encodings_list, face_encoding)
+                    name = "Unknown Person"
+                    keys = images_dict.keys()
+                    keys_list = list(keys)
+                    for i in range(len(keys_list)):
+                        if match[(len(match)-len(keys_list))+i]:
+                            name = keys_list[i]
+                            #print(keys_list)
+                            lockHalt = True
+                            if GPIO.input(doorSensor):
+                                GPIO.output(led,True)
+                                # Unlock Door
+                                print('%s is Unlocking Door'%name)
+                                deadbolt.retract()
+                                # Take an image of who unlocked the door
+                                camera.capture('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
+                                # Upload image to Firebase
+                                storage.child("AuraLock Data").child('Images to App').child('%s'%name).put('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
+                                # Update the newUnlockName variable to whomever unlocked the door
+                                db.child("AuraLock Data").child("newUnlockName").set(name)
+                                # Upload the current date/time to Firebase
+                                current_time = datetime.datetime.now()
+                                db.child("AuraLock Data").child("datetime").set('%s-%s-%s %s:%s'%(current_time.year,current_time.month,current_time.day,current_time.hour,current_time.minute))
+                                # Remove the image of who unlocked the door from the RPi
+                                os.remove('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
+                                time.sleep(5)
+                                #Wait for door to close
+                                while True:
+                                    if GPIO.input(doorSensor):
+                                        time.sleep(2)
+                                        # Lock Door
+                                        print('Door Closed, Locking Door')
+                                        deadbolt.extend()
+                                        lockHalt = False
+                                        break
+                                GPIO.output(led,False)
+                                auth = False
+                    if delayedUnlock and auth:
                         print("Door Unlocked in Delayed Unlock Mode: All Access Authorized")
                         GPIO.output(led,True)
                         lockHalt = True
                         deadbolt.retract()
+                        # Take an image of who unlocked the door
+                        camera.capture('/home/pi/Documents/AuraLock/Images to App/Unknown.jpg')
+                        # Upload image to Firebase
+                        storage.child("AuraLock Data").child('Images to App').child('Unknown').put('/home/pi/Documents/AuraLock/Images to App/Unknown.jpg')
+                        # Update the newUnlockName variable to 'Unknown' Indicating someone has unlocked the door in delayedUnlock mode who was not previously registered
+                        db.child("AuraLock Data").child("newUnlockName").set('Unknown')
+                        # Upload the current date/time to Firebase
+                        current_time = datetime.datetime.now()
+                        db.child("AuraLock Data").child("datetime").set('%s-%s-%s %s:%s'%(current_time.year,current_time.month,current_time.day,current_time.hour,current_time.minute))
+                        # Remove the image of who unlocked the door from the RPi
+                        os.remove('/home/pi/Documents/AuraLock/Images to App/Unknown.jpg')
                         time.sleep(5)
                         #Wait for door to close
                         while True:
@@ -191,45 +241,7 @@ try:
                                 lockHalt = False
                                 break
                         GPIO.output(led,False)
-                    else:
-                        # See if the face is a match for the known face(s)
-                        match = face_recognition.compare_faces(encodings_list, face_encoding)
-                        name = "Unknown Person"
-                        keys = images_dict.keys()
-                        keys_list = list(keys)
-                        for i in range(len(keys_list)):
-                            if match[(len(match)-len(keys_list))+i]:
-                                name = keys_list[i]
-                                #print(keys_list)
-                                lockHalt = True
-                                if GPIO.input(doorSensor):
-                                    GPIO.output(led,True)
-                                    # Unlock Door
-                                    print('%s is Unlocking Door'%name)
-                                    # Take an image of who unlocked the door
-                                    camera.capture('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
-                                    # Unlock Door
-                                    deadbolt.retract()
-                                    # Upload image to Firebase
-                                    storage.child("AuraLock Data").child('Images to App').child('%s'%name).put('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
-                                    # Update the newUnlockName variable to whomever unlocked the door
-                                    db.child("AuraLock Data").child("newUnlockName").set(name)
-                                    # Upload the current date/time to Firebase
-                                    current_time = datetime.datetime.now()
-                                    db.child("AuraLock Data").child("datetime").set('%s-%s-%s %s:%s'%(current_time.year,current_time.month,current_time.day,current_time.hour,current_time.minute))
-                                    # Remove the image of who unlocked the door from the RPi
-                                    os.remove('/home/pi/Documents/AuraLock/Images to App/%s.jpg'%name)
-                                    time.sleep(5)
-                                    #Wait for door to close
-                                    while True:
-                                        if GPIO.input(doorSensor):
-                                            time.sleep(2)
-                                            # Lock Door
-                                            print('Door Closed, Locking Door')
-                                            deadbolt.extend()
-                                            lockHalt = False
-                                            break
-                                    GPIO.output(led,False)
+                    
                 # Check to see if a Live Capture has been requested. If so, upload a current image to Firebase
                 get_data = db.child("AuraLock Data").child("LiveCapture").child("newCapture").get()
                 if(get_data.val() == 'True'):
@@ -240,6 +252,7 @@ try:
                     storage.child("AuraLock Data").child("Real Time Images").child("LiveCapture.jpg").put("/home/pi/Documents/AuraLock/Real Time Images/LiveCapture.jpg")
                     os.remove('/home/pi/Documents/AuraLock/Real Time Images/LiveCapture.jpg')
                     db.child("AuraLock Data").child("LiveCapture").child("captureProgress").set("complete")
+
     # This simple thread detects whether or not the door has opened.
     # If it has, the door is relocked upon closing. This covers the case when a user
     # manually opens the door from the inside while exiting.
@@ -282,7 +295,7 @@ try:
                 delayTime = int(get_data.val())
                 # Debugging print
                 print('Delayed Unlock Enabled for %s minutes'%delayTime)
-                timeRemaining = delayTime
+                timeRemaining = delayTime+1
                 for i in range(delayTime+1):
                     print('Time Remaining: %s minute(s)'%timeRemaining)
                     if(timeRemaining == 0): 
